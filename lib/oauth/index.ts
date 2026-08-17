@@ -1,0 +1,213 @@
+import { createRemoteJWKSet, importSPKI, jwtVerify } from 'jose';
+import type { JWTVerifyGetKey } from 'jose';
+
+import { AuthenticationError } from '@/errors';
+
+import { env } from '@/lib/config/env';
+
+export type OAuthTokenResponse = {
+	accessToken: string;
+	refreshToken?: string | null;
+	idToken?: string | null;
+	tokenType?: string | null;
+	expiresIn: number;
+	scope?: string | null;
+};
+
+type OAuthMetadata = {
+	issuer: string;
+	audience: string;
+	/** Solo lo trae Authorization Code + PKCE (handshake de redirección). ROPC no tiene nonce. */
+	nonce?: string;
+};
+
+const createBasicAuthHeader = (): string =>
+	`Basic ${Buffer.from(`${env.OAUTH_CLIENT_ID}:${env.OAUTH_CLIENT_SECRET}`).toString('base64')}`;
+
+const parseTokenResponse = async (response: Response): Promise<OAuthTokenResponse> => {
+	const body = (await response.json()) as Record<string, unknown>;
+
+	if (!response.ok) {
+		const errorMessage =
+			typeof body.error_description === 'string'
+				? body.error_description
+				: 'OAuth token exchange failed';
+		throw new AuthenticationError(errorMessage);
+	}
+
+	const accessToken = body.access_token;
+	const tokenType = body.token_type;
+	const expiresIn = body.expires_in;
+
+	if (typeof accessToken !== 'string' || typeof expiresIn !== 'number') {
+		throw new AuthenticationError('OAuth provider returned an invalid token payload');
+	}
+
+	return {
+		accessToken,
+		refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : null,
+		idToken: typeof body.id_token === 'string' ? body.id_token : null,
+		tokenType: typeof tokenType === 'string' ? tokenType : null,
+		expiresIn,
+		scope: typeof body.scope === 'string' ? body.scope : null,
+	};
+};
+
+export const buildAuthorizationUrl = (
+	state: string,
+	codeChallenge: string,
+	nonce: string,
+): string => {
+	const url = new URL(env.OAUTH_AUTHORIZATION_URL);
+
+	url.searchParams.set('response_type', 'code');
+	url.searchParams.set('client_id', env.OAUTH_CLIENT_ID);
+	url.searchParams.set('redirect_uri', env.OAUTH_REDIRECT_URI);
+	url.searchParams.set('scope', env.OAUTH_SCOPE);
+	url.searchParams.set('state', state);
+	url.searchParams.set('code_challenge', codeChallenge);
+	url.searchParams.set('code_challenge_method', 'S256');
+	url.searchParams.set('nonce', nonce);
+
+	return url.toString();
+};
+
+export const exchangeCode = async (
+	code: string,
+	codeVerifier: string,
+): Promise<OAuthTokenResponse> => {
+	const response = await fetch(env.OAUTH_TOKEN_URL, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/x-www-form-urlencoded',
+			Authorization: createBasicAuthHeader(),
+		},
+		body: new URLSearchParams({
+			grant_type: 'authorization_code',
+			code,
+			redirect_uri: env.OAUTH_REDIRECT_URI,
+			code_verifier: codeVerifier,
+			client_id: env.OAUTH_CLIENT_ID,
+		}),
+	});
+
+	return parseTokenResponse(response);
+};
+
+/**
+ * Resource Owner Password Credentials — solo para el cliente público móvil
+ * (`OAUTH_MOBILE_CLIENT_ID`, `directAccessGrantsEnabled: true` únicamente en ese cliente).
+ * El cliente web sigue exigiendo Authorization Code + PKCE — ver `exchangeCode`.
+ */
+export const passwordGrant = async (
+	username: string,
+	password: string,
+): Promise<OAuthTokenResponse> => {
+	const response = await fetch(env.OAUTH_TOKEN_URL, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/x-www-form-urlencoded',
+		},
+		body: new URLSearchParams({
+			grant_type: 'password',
+			username,
+			password,
+			client_id: env.OAUTH_MOBILE_CLIENT_ID,
+			scope: env.OAUTH_SCOPE,
+		}),
+	});
+
+	return parseTokenResponse(response);
+};
+
+const createKeyResolver = (): JWTVerifyGetKey => {
+	if (env.OAUTH_JWKS_URL) {
+		return createRemoteJWKSet(new URL(env.OAUTH_JWKS_URL));
+	}
+
+	if (env.OAUTH_PUBLIC_KEY_PEM) {
+		const publicKeyPem = env.OAUTH_PUBLIC_KEY_PEM;
+
+		return async () => importSPKI(publicKeyPem, 'RS256');
+	}
+
+	throw new AuthenticationError(
+		'Missing OAUTH_JWKS_URL or OAUTH_PUBLIC_KEY_PEM for ID token verification',
+	);
+};
+
+export const verifyIdToken = async (
+	idToken: string,
+	metadata: OAuthMetadata,
+): Promise<Record<string, unknown>> => {
+	const key = createKeyResolver();
+	const result = await jwtVerify(idToken, key, {
+		issuer: metadata.issuer,
+		audience: metadata.audience,
+	});
+
+	// Sin nonce (ROPC): solo se valida si el llamador lo pasó explícitamente.
+	if (metadata.nonce !== undefined) {
+		const nonce = result.payload.nonce;
+
+		if (typeof nonce !== 'string' || nonce !== metadata.nonce) {
+			throw new AuthenticationError('Invalid ID token nonce');
+		}
+	}
+
+	return result.payload as Record<string, unknown>;
+};
+
+type ClientOptions = {
+	/** Con qué cliente OAuth se emitieron los tokens — ver SessionTokenSet.clientId. */
+	clientId?: string;
+};
+
+export const refreshAccessToken = async (
+	refreshToken: string,
+	options: ClientOptions = {},
+): Promise<OAuthTokenResponse> => {
+	const clientId = options.clientId ?? env.OAUTH_CLIENT_ID;
+	// El cliente público móvil no tiene secreto: no se puede mandar Basic Auth con él.
+	const isPublicClient = options.clientId !== undefined && options.clientId !== env.OAUTH_CLIENT_ID;
+
+	const response = await fetch(env.OAUTH_TOKEN_URL, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/x-www-form-urlencoded',
+			...(isPublicClient ? {} : { Authorization: createBasicAuthHeader() }),
+		},
+		body: new URLSearchParams({
+			grant_type: 'refresh_token',
+			refresh_token: refreshToken,
+			client_id: clientId,
+		}),
+	});
+
+	return parseTokenResponse(response);
+};
+
+export const revokeToken = async (token: string, options: ClientOptions = {}): Promise<void> => {
+	if (!env.OAUTH_REVOCATION_URL) {
+		return;
+	}
+
+	const clientId = options.clientId ?? env.OAUTH_CLIENT_ID;
+	const isPublicClient = options.clientId !== undefined && options.clientId !== env.OAUTH_CLIENT_ID;
+
+	const response = await fetch(env.OAUTH_REVOCATION_URL, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/x-www-form-urlencoded',
+			...(isPublicClient ? {} : { Authorization: createBasicAuthHeader() }),
+		},
+		body: new URLSearchParams({
+			token,
+			client_id: clientId,
+		}),
+	});
+
+	if (!response.ok) {
+		throw new AuthenticationError('OAuth token revocation failed');
+	}
+};
