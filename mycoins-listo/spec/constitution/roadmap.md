@@ -1,0 +1,44 @@
+# Roadmap
+
+_Orden y estado de las features. Es la vista de "qué hay hecho, qué toca ahora y qué viene". Cada entrada apunta a su carpeta en_ _`features/`._
+
+## Hecho ✅
+
+_Features completadas, en orden de implementación._
+
+1. **000 · Modelado de Base de Datos Core** — Creación del esquema Prisma multi-tenant (organizaciones, usuarios, RBAC) como base fundacional.
+2. **001 · Pipeline Spec-Driven (SDD)** — Configuración del middleware `parser.js` para validación automática contra contratos OpenAPI.
+3. **002 · Autenticación Core (Login)** — Flujo OAuth 2.0 Authorization Code + PKCE con sesiones cifradas en cookies HttpOnly mediante `@hapi/iron`, callback, refresh, logout y documentación OpenAPI completa.
+4. **003 · Gestión de Usuarios** — CRUD completo de usuarios (GET, POST, PATCH, DELETE) con paginación, búsqueda, filtros, ordenamiento, soft delete, validación de permisos y documentación OpenAPI.
+5. **004 · Gestión de Organizaciones y Sedes** — CRUD completo para organizaciones (tenants) y sedes (venues/ubicaciones) con relación 1:N, paginación, filtros, soft delete, validación, autorización basada en permisos (`organizaciones.read`/`organizaciones.manage`), transacciones en eliminación en cascada y documentación OpenAPI completa.
+6. **005 · Gestión de Roles y Permisos** — CRUD completo de roles por organización, catálogo global de permisos, asignación M:N de permisos a roles, soft delete transaccional, paginación, autorización basada en permisos (`roles.read`/`roles.manage`) y documentación OpenAPI completa.
+7. **006 · Asignación de Roles a Usuarios por Organización** — Endpoints para asignar roles a usuarios en creación o actualización, listar, agregar y remover roles específicos con validación de integridad referencial, transacciones ACID, autorización basada en permisos (`users.manage`/`users.read`), y documentación OpenAPI completa.
+8. **007 · Manejo Robusto de Errores con Detalles Zod** — Sistema centralizado de transformación de errores que convierte excepciones Zod y errores de aplicación en respuestas HTTP consistentes con detalles de validación estructurados, mensajes en español, logging sin exposición de información sensible, e integración en todos los endpoints existentes.
+9. **008 · Entorno de Demostración de Autenticación y Autorización** — Identity Provider real (Keycloak vía Docker Compose, realm importado con cliente OIDC confidencial + PKCE S256 y usuarios de prueba) que hace **ejecutable por primera vez** el flujo OAuth de la feature 002; semilla idempotente de los roles base (Futbolista y Administrador globales, Gestor de Cancha por organización) y script de asignación de roles con alcance (`organizationId`/`venueId`). Login, sesión y logout verificados de punta a punta, incluyendo 401 sin sesión y 403 sin permisos. Corrige además el comando de seed de Prisma 7, que impedía poblar el catálogo de permisos.
+
+10. **009 · Sesiones Persistentes en Servidor** — Los tokens OAuth salen de la cookie y pasan a la tabla `UserSession` (que existía sin usarse), guardados cifrados con `@hapi/iron`. **Arregla el login en el navegador**: la cookie pesaba 5.336 bytes y los navegadores descartan en silencio toda cookie de más de 4.096, así que el flujo pasaba con `curl` y fallaba en Chrome. La cookie baja a **429 bytes**. De paso, el logout **ahora sí invalida la sesión en el servidor** (una cookie copiada devuelve 401, no 200) y los roles concedidos surten efecto **sin volver a iniciar sesión**, porque el usuario se lee de la base en cada petición.
+
+11. **011 · Taller de Optimizaciones de Backend** — Caché cache-aside resiliente (Redis con fallback en memoria) para sesión y usuario (`session:${id}` / `user:${id}`, TTL 5 min) con invalidación explícita en logout y en cambios de rol; corrección de N+1 en el listado de organizaciones usando `_count` de sedes en una sola consulta; cola de trabajo asíncrona `audit-logs` (BullMQ, con fallback en memoria) y worker dedicado (`workers/audit.worker.ts`) que registra el acceso y simula una alerta de seguridad tras cada login, sin bloquear la respuesta; middleware de autenticación reducido de 2 consultas a 0 en el camino cacheado. Ver `spec/features/011-taller-optimizaciones/` para el detalle y la comparación antes/después.
+
+11. **011 · Optimización del Backend (Taller Semana 8)** — Caché cache-aside resiliente (`CacheService`, Redis con fallback en memoria) para sesión y usuario activo con TTL de 5 min e invalidación explícita en logout/rotación de roles; corrección de N+1 en el listado de organizaciones usando `_count` agrupado en vez de una consulta por organización; cola de auditoría (`audit-logs` en BullMQ) con worker dedicado (`workers/audit.worker.ts`) que registra el acceso y simula una alerta de seguridad de forma asíncrona tras cada login, sin bloquear la respuesta; justificación documentada de eager loading (roles/permisos en el middleware de auth) vs. lazy loading (sedes de una organización sólo bajo demanda). Ver `spec/features/011-taller-optimizaciones/`.
+
+## Siguiente 🔜
+
+_Lo próximo a abordar. Idealmente una sola feature "en curso" a la vez._
+
+- **013 · Finanzas personales** — En curso. Núcleo de cuentas, categorías, movimientos, presupuestos y dashboard web. Pendiente: pruebas de integración, documentación OpenAPI, edición desde la interfaz y recomendaciones financieras con IA bajo revisión humana.
+
+- **010 · Consistencia de Permisos y Deuda Técnica** — Tres defectos abiertos:
+  1. **Códigos de permiso inconsistentes.** El middleware exige `users.read`, `users.create` y `users.manage`, pero el catálogo sembrado (y la constitución, §10) define `usuarios.read` / `usuarios.write` / `usuarios.delete`. Ningún permiso existente puede satisfacer al módulo de usuarios: `/api/users` responde 403 aunque se concedan todos los permisos. **Hay que decidir si el proyecto nombra los permisos en español o en inglés.**
+  2. **Deriva en el historial de migraciones.** El checksum de `20260630185000_add_roles_permissions_fields` no cuadra con el registrado en la base: fue modificada después de aplicarse. `prisma migrate dev` exige un reset completo (borraría todos los datos). Hay que reconciliarlo antes de volver a tocar el schema.
+  3. **`yarn build` está roto.** `database/roles-permisos/role.db.ts` tipa `data` como `unknown` y falla el type check del build.
+
+## Backlog / ideas 💡
+
+_Sin comprometer ni ordenar del todo. Ideas que respetan la constitución._
+
+- **Consejos financieros personalizados** — Generar explicaciones sobre hábitos de gasto con datos agregados y revisión humana.
+- **Importación de movimientos** — Incorporar archivos CSV de bancos con vista previa, validación y reversión.
+- **Metas de ahorro** — Añadir objetivos con monto, fecha límite y seguimiento del progreso.
+
+> Cada feature nueva se crea como `features/NNN-nombre-feature/` con `spec.md`, `plan.md` y `tasks.md` antes de tocar código.

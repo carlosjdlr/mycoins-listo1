@@ -1,0 +1,140 @@
+{
+  "realm": "mycoins",
+  "enabled": true,
+  "displayName": "MyCoins",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "clients": [
+    {
+      "clientId": "mycoins-api",
+      "name": "MyCoins API",
+      "description": "Cliente OIDC confidencial del backend MyCoins (Authorization Code + PKCE)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "mycoins-dev-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/api/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:3000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*"
+      },
+      "defaultClientScopes": [
+        "openid",
+        "email",
+        "profile",
+        "roles",
+        "web-origins",
+        "acr"
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ]
+    },
+    {
+      "clientId": "mycoins-mobile",
+      "name": "MyCoins Mobile",
+      "description": "Cliente OIDC publico de la app movil MyCoins (Ionic/Capacitor), Resource Owner Password Credentials (formulario nativo de usuario/contrasena)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "ec.mycoins.app://auth/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": [
+        "openid",
+        "email",
+        "profile",
+        "roles",
+        "web-origins",
+        "acr"
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "estudiante",
+      "email": "estudiante@mycoins.local",
+      "firstName": "Estudiante",
+      "lastName": "MyCoins",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "mycoins123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-mycoins"
+      ]
+    },
+    {
+      "username": "gestor",
+      "email": "gestor@mycoins.local",
+      "firstName": "Lucia",
+      "lastName": "Paredes",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "mycoins123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-mycoins"
+      ]
+    },
+    {
+      "username": "administrador",
+      "email": "administrador@mycoins.local",
+      "firstName": "Sofia",
+      "lastName": "Cordova",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "mycoins123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-mycoins"
+      ]
+    }
+  ]
+}
