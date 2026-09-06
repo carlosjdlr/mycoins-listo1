@@ -1,0 +1,102 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { createRouter } from 'next-connect';
+
+import { AuthenticationError } from '@/errors';
+import { routerOptions } from '@/lib/api/router-config';
+import { env } from '@/lib/config/env';
+import { exchangeCode, verifyIdToken } from '@/lib/oauth';
+import {
+	clearTemporaryOAuthCookie,
+	setSessionCookie,
+	decryptTemporaryOAuthCookie,
+	type SessionCookiePayload,
+} from '@/lib/session';
+import { findOrSyncByOAuth } from '@/database/users';
+import { sessionService } from '@/services/auth/session.service';
+import { auditQueueService } from '@/lib/queue';
+
+type OAuthClaims = {
+	sub?: string;
+	email?: string;
+	name?: string;
+};
+
+const router = createRouter<NextApiRequest, NextApiResponse>();
+
+router.get(async (req, res) => {
+	const code = typeof req.query.code === 'string' ? req.query.code : null;
+	const state = typeof req.query.state === 'string' ? req.query.state : null;
+	const temporaryCookie = req.cookies[env.SESSION_TEMP_COOKIE_NAME];
+
+	if (!code || !state) {
+		throw new AuthenticationError('Missing authorization code or state');
+	}
+
+	if (!temporaryCookie) {
+		throw new AuthenticationError('Missing OAuth state cookie');
+	}
+
+	const oauthState = await decryptTemporaryOAuthCookie(temporaryCookie);
+
+	if (oauthState.state !== state) {
+		throw new AuthenticationError('Invalid OAuth state');
+	}
+
+	const tokens = await exchangeCode(code, oauthState.codeVerifier);
+
+	if (!tokens.idToken) {
+		throw new AuthenticationError('Missing ID token from provider');
+	}
+
+	const claims = (await verifyIdToken(tokens.idToken, {
+		issuer: env.OAUTH_ISSUER,
+		audience: env.OAUTH_CLIENT_ID,
+		nonce: oauthState.nonce,
+	})) as OAuthClaims;
+
+	if (!claims.sub || !claims.email || !claims.name) {
+		throw new AuthenticationError('Incomplete identity claims from provider');
+	}
+
+	const syncedUser = await findOrSyncByOAuth(claims.sub, claims.email, claims.name);
+
+	// Los tokens se guardan en `user_sessions`, no en la cookie: los tres juntos
+	// superan los 4096 bytes que admite un navegador.
+	const sessionId = await sessionService.create(syncedUser.user.id, {
+		accessToken: tokens.accessToken,
+		refreshToken: tokens.refreshToken,
+		idToken: tokens.idToken,
+		tokenType: tokens.tokenType,
+		expiresAt: new Date(Date.now() + tokens.expiresIn * 1000).toISOString(),
+		nonce: oauthState.nonce,
+	});
+
+	const cookiePayload: SessionCookiePayload = {
+		sessionId,
+		createdAt: new Date().toISOString(),
+	};
+
+	await setSessionCookie(res, cookiePayload);
+	clearTemporaryOAuthCookie(res);
+
+	// Tarea asíncrona (cola de trabajo): registrar el acceso y simular una alerta
+	// de seguridad NO deben retrasar la respuesta al navegador. No se hace `await`
+	// a propósito: el job se procesa en segundo plano (BullMQ o fallback en memoria).
+	const auditPayload = {
+		userId: syncedUser.user.id,
+		email: claims.email,
+		ip:
+			(req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
+			req.socket.remoteAddress,
+		userAgent: Array.isArray(req.headers['user-agent'])
+			? req.headers['user-agent'][0]
+			: req.headers['user-agent'],
+		timestamp: new Date().toISOString(),
+	};
+	auditQueueService.addJob('REGISTER_ACCESS_AUDIT', auditPayload);
+	auditQueueService.addJob('SEND_SECURITY_ALERT', auditPayload);
+
+	res.redirect(302, env.OAUTH_SUCCESS_REDIRECT_URL);
+});
+
+export default router.handler(routerOptions);

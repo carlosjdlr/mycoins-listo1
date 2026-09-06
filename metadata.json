@@ -1,0 +1,6 @@
+{
+  "name": "MyCoins",
+  "description": "Aplicación de gestión de finanzas y gastos personales con control de ingresos, egresos, categorías y consejos financieros con IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
