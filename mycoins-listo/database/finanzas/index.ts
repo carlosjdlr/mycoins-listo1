@@ -43,9 +43,7 @@ export const listBudgets = (userId: string) => prisma.budget.findMany({ where: {
 
 export const getSummary = async (userId: string) => {
   const transactions = await prisma.financialTransaction.findMany({ where: { userId, deletedAt: null }, select: { type: true, amount: true } });
-  const accounts = await prisma.financialAccount.findMany({ where: { userId, deletedAt: null }, select: { initialBalance: true } });
   const income = transactions.filter(item => item.type === 'INCOME').reduce((total, item) => total + Number(item.amount), 0);
   const expenses = transactions.filter(item => item.type === 'EXPENSE').reduce((total, item) => total + Number(item.amount), 0);
-  const initialBalance = accounts.reduce((total, item) => total + Number(item.initialBalance), 0);
-  return { income, expenses, balance: initialBalance + income - expenses, transactionCount: transactions.length };
+  return { income, expenses, balance: income - expenses, transactionCount: transactions.length };
 };
