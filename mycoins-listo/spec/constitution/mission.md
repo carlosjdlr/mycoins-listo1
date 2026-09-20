@@ -15,7 +15,7 @@ MyCoins es una aplicación de finanzas personales centrada en una vista simple y
 ## Para quién
 
 - Personas que necesitan una visión cotidiana de sus finanzas sin una herramienta contable compleja.
-- Estudiantes y familias que desean crear hábitos de presupuesto y ahorro.
+- Estudiantes y famlias que desean crear hábitos de presupuesto y ahorro.
 - Equipos de desarrollo que necesitan una API tipada, documentada y segura para futuras experiencias web o móvil.
 
 ## Principios
